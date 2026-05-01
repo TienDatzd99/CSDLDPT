@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+male_dataset_500/
+*.sqlite3
+*.db
+*.log

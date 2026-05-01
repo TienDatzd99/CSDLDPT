@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+librosa
+soundfile
+numpy
+scipy
+psycopg2-binary
+pgvector
+sqlalchemy
