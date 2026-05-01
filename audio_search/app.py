@@ -10,7 +10,11 @@ from audio_search.database import init_db
 from audio_search.search_engine import build_search_trace, index_folder
 
 app = FastAPI(title="Audio Search UI")
-DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", "../male_dataset_500")).resolve()
+
+# Resolve DATASET_FOLDER relative to app location
+_audio_search_dir = Path(__file__).parent.parent  # /Users/tiendat/CSDLDPT
+_default_dataset = _audio_search_dir / "male_dataset_500"
+DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", str(_default_dataset))).resolve()
 
 
 def render_page(title, message="", trace=None):
@@ -246,12 +250,22 @@ def home():
 
 @app.get("/audio/{file_name:path}")
 def serve_audio(file_name: str):
-    audio_path = (DATASET_FOLDER / file_name).resolve()
-    if DATASET_FOLDER not in audio_path.parents and audio_path != DATASET_FOLDER:
+    try:
+        # Construct the full path and resolve it
+        audio_path = (DATASET_FOLDER / file_name).resolve()
+        
+        # Security check: ensure the resolved path is within DATASET_FOLDER
+        audio_path.relative_to(DATASET_FOLDER)
+        
+        # Check if file exists
+        if not audio_path.exists() or not audio_path.is_file():
+            return HTMLResponse("File not found", status_code=404)
+        
+        return FileResponse(audio_path, media_type="audio/wav")
+    except (ValueError, FileNotFoundError):
+        # ValueError: audio_path is not relative to DATASET_FOLDER (security issue)
+        # FileNotFoundError: path doesn't exist
         return HTMLResponse("File not found", status_code=404)
-    if not audio_path.exists() or not audio_path.is_file():
-        return HTMLResponse("File not found", status_code=404)
-    return FileResponse(audio_path)
 
 
 @app.post("/index", response_class=HTMLResponse)
