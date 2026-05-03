@@ -2,6 +2,7 @@
 Trích xuất đặc trưng âm thanh (feature extraction).
 - Tiền xử lý âm thanh
 - Tính toán 24D features (energy, ZCR, pitch, spectral_centroid, 20x MFCC)
+- Trích thêm spectral bandwidth để tăng khả năng phân biệt màu giọng
 """
 import librosa
 import numpy as np
@@ -44,11 +45,12 @@ def preprocess_audio(file_path):
 
 def extract_features(y, sr):
     """
-    Trích xuất 24 đặc trưng từ âm thanh:
+    Trích xuất 24 đặc trưng từ âm thanh + 1 đặc trưng bổ sung:
     - Energy (1)
     - ZCR (1)
     - Pitch/F0 (1)
     - Spectral Centroid (1)
+    - Spectral Bandwidth (1)
     - MFCC (20)
     
     Args:
@@ -56,7 +58,7 @@ def extract_features(y, sr):
         sr: Sample rate
         
     Returns:
-        tuple: (energy, zcr, f0_mean, spectral_centroid, feature_vector, mfcc_matrix)
+        tuple: (energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, mfcc_matrix)
             - feature_vector: List 24 chiều cho pgvector
             - mfcc_matrix: np.array (n_frames, n_mfcc) cho DTW
     """
@@ -72,6 +74,9 @@ def extract_features(y, sr):
     
     # ===== SPECTRAL CENTROID =====
     spectral_centroid = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
+
+    # ===== SPECTRAL BANDWIDTH =====
+    spectral_bandwidth = float(np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr)))
     
     # ===== MFCC (Mel-Frequency Cepstral Coefficients) =====
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=MFCC_N_COEFFS)
@@ -82,7 +87,7 @@ def extract_features(y, sr):
     # [energy, zcr, f0, centroid, 20x MFCC]
     feature_vector = np.concatenate(([energy, zcr, f0_mean, spectral_centroid], mfcc_mean))
     
-    return energy, zcr, f0_mean, spectral_centroid, feature_vector.tolist(), mfcc_matrix
+    return energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector.tolist(), mfcc_matrix
 
 
 def cosine_distance(vec_a, vec_b):

@@ -1,12 +1,21 @@
 import base64
+import io
 import os
 import tempfile
 from pathlib import Path
+
+import librosa
+import librosa.display
+import matplotlib
+import numpy as np
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from src.database import init_db
+from src.feature_extraction import preprocess_audio
 from src.retrieval import build_search_trace, index_folder
 
 app = FastAPI(title="Audio Search UI")
@@ -17,10 +26,45 @@ _default_dataset = _project_root / "data" / "dataset" / "male_dataset_500"
 DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", str(_default_dataset))).resolve()
 
 
+def _figure_to_data_uri(fig):
+  """Convert a matplotlib figure into a base64 data URI."""
+  buffer = io.BytesIO()
+  fig.savefig(buffer, format="png", dpi=120, bbox_inches="tight")
+  plt.close(fig)
+  encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+  return f"data:image/png;base64,{encoded}"
+
+
+def build_visualizations(file_path):
+  """Build waveform and spectrogram visualizations for the query audio."""
+  y, sr, _ = preprocess_audio(file_path)
+  times = np.linspace(0, len(y) / sr, num=len(y), endpoint=False)
+
+  fig_wave, ax_wave = plt.subplots(figsize=(8.5, 2.5))
+  ax_wave.plot(times, y, color="#7a4f2b", linewidth=0.8)
+  ax_wave.set_title("Waveform")
+  ax_wave.set_xlabel("Time (s)")
+  ax_wave.set_ylabel("Amplitude")
+  ax_wave.grid(alpha=0.25)
+  waveform_uri = _figure_to_data_uri(fig_wave)
+
+  stft = librosa.stft(y)
+  db_spec = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
+  fig_spec, ax_spec = plt.subplots(figsize=(8.5, 3.0))
+  img = librosa.display.specshow(db_spec, sr=sr, x_axis="time", y_axis="hz", ax=ax_spec, cmap="magma")
+  ax_spec.set_title("Spectrogram (dB)")
+  fig_spec.colorbar(img, ax=ax_spec, format="%+2.0f dB")
+  spectrogram_uri = _figure_to_data_uri(fig_spec)
+
+  return waveform_uri, spectrogram_uri
+
+
 def render_page(title, message="", trace=None):
     trace = trace or {}
     query_summary = trace.get("query_summary") or {}
     query_audio_data_uri = trace.get("query_audio_data_uri") or ""
+    waveform_image_uri = trace.get("waveform_image_uri") or ""
+    spectrogram_image_uri = trace.get("spectrogram_image_uri") or ""
     vector_candidates = trace.get("vector_candidates") or []
     final_results = trace.get("final_results") or []
 
@@ -62,8 +106,27 @@ def render_page(title, message="", trace=None):
             <div><span>ZCR</span><strong>{query_summary['zcr']:.6f}</strong></div>
             <div><span>Pitch mean</span><strong>{query_summary['pitch_mean']:.6f}</strong></div>
             <div><span>Spectral centroid</span><strong>{query_summary['spectral_centroid']:.6f}</strong></div>
+            <div><span>Spectral bandwidth</span><strong>{query_summary['spectral_bandwidth']:.6f}</strong></div>
             <div><span>Feature vector</span><strong>{query_summary['feature_vector_dim']} chiều</strong></div>
             <div><span>MFCC shape</span><strong>{query_summary['mfcc_matrix_shape']}</strong></div>
+          </div>
+        </section>
+        """
+
+    visual_html = ""
+    if waveform_image_uri or spectrogram_image_uri:
+        visual_html = f"""
+        <section class="card">
+          <h2>Kết quả trung gian trực quan</h2>
+          <div class="viz-grid">
+            <div>
+              <h3>Waveform</h3>
+              {f'<img src="{waveform_image_uri}" alt="Waveform" />' if waveform_image_uri else '<p class="empty">Chưa có waveform</p>'}
+            </div>
+            <div>
+              <h3>Spectrogram</h3>
+              {f'<img src="{spectrogram_image_uri}" alt="Spectrogram" />' if spectrogram_image_uri else '<p class="empty">Chưa có spectrogram</p>'}
+            </div>
           </div>
         </section>
         """
@@ -150,10 +213,13 @@ def render_page(title, message="", trace=None):
             .summary-grid span {{ display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 6px; }}
             .summary-grid strong {{ font-size: 1rem; }}
             .query-player {{ margin-bottom: 14px; }}
+            .viz-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
+            .viz-grid h3 {{ margin: 0 0 8px; font-size: 1rem; color: var(--accent); }}
+            .viz-grid img {{ width: 100%; border-radius: 12px; border: 1px solid var(--border); background: #fff; }}
             .footer-note {{ color: var(--muted); font-size: 0.92rem; margin-top: 10px; }}
             @media (max-width: 920px) {{
               .hero {{ grid-template-columns: 1fr; }}
-              .grid-3, .summary-grid {{ grid-template-columns: 1fr; }}
+              .grid-3, .summary-grid, .viz-grid {{ grid-template-columns: 1fr; }}
             }}
           </style>
         </head>
@@ -174,7 +240,7 @@ def render_page(title, message="", trace=None):
                   <h2>Index dữ liệu</h2>
                   <form method="post" action="/index">
                     <label for="folder_path">Thư mục dữ liệu WAV</label>
-                    <input id="folder_path" name="folder_path" type="text" value="./male_dataset_500" />
+                    <input id="folder_path" name="folder_path" type="text" value="data/dataset/male_dataset_500" />
                     <div class="actions">
                       <button type="submit">Index vào CSDL</button>
                     </div>
@@ -214,6 +280,7 @@ def render_page(title, message="", trace=None):
 
             {f'<div class="message">{message}</div>' if message else ''}
             {summary_html}
+            {visual_html}
 
             <div class="tables">
               <section class="card">
@@ -261,7 +328,7 @@ def serve_audio(file_name: str):
 
 
 @app.post("/index", response_class=HTMLResponse)
-def index_data(folder_path: str = Form(default="./male_dataset_500")):
+def index_data(folder_path: str = Form(default="data/dataset/male_dataset_500")):
     init_db()
     index_folder(folder_path)
     return render_page("Audio Search UI", message=f"Đã index dữ liệu từ {folder_path}.")
@@ -284,6 +351,7 @@ async def search_audio(
         temp_path = tmp_file.name
 
     try:
+        waveform_image_uri, spectrogram_image_uri = build_visualizations(temp_path)
         trace = build_search_trace(
             query_file_path=temp_path,
             metric=metric,
@@ -293,7 +361,12 @@ async def search_audio(
         return render_page(
             "Audio Search UI",
             message=f"Đã tìm kiếm với metric={metric}, top_k={top_k}.",
-            trace={**trace, "query_audio_data_uri": query_audio_data_uri},
+            trace={
+                **trace,
+                "query_audio_data_uri": query_audio_data_uri,
+                "waveform_image_uri": waveform_image_uri,
+                "spectrogram_image_uri": spectrogram_image_uri,
+            },
         )
     finally:
         try:

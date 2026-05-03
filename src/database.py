@@ -24,6 +24,7 @@ class AudioMetadata(Base):
     - zcr_mean: Zero crossing rate
     - pitch_mean: Tần số cơ bản
     - spectral_centroid: Tâm trọng quang phổ
+    - spectral_bandwidth: Độ rộng phổ
     - feature_vector: Vector 24D (pgvector) - dùng cho Stage 1 search
     - mfcc_matrix: Ma trận MFCC 157×20 (JSON) - dùng cho Stage 2 DTW
     """
@@ -37,6 +38,7 @@ class AudioMetadata(Base):
     zcr_mean = Column(Float)
     pitch_mean = Column(Float)
     spectral_centroid = Column(Float)
+    spectral_bandwidth = Column(Float)
     
     # Vector 24 chiều: [energy, zcr, f0, centroid, 20x mfcc]
     # Dùng cho pgvector cosine/euclidean search (nhanh)
@@ -51,6 +53,7 @@ def init_db():
     """Tạo bảng và pgvector extension nếu chưa tồn tại."""
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("ALTER TABLE IF EXISTS audio_metadata ADD COLUMN IF NOT EXISTS spectral_bandwidth DOUBLE PRECISION"))
     Base.metadata.create_all(bind=engine)
 
 
@@ -62,6 +65,7 @@ def upsert_audio_metadata(
     zcr_mean,
     pitch_mean,
     spectral_centroid,
+    spectral_bandwidth,
     feature_vector,
     mfcc_matrix,
 ):
@@ -76,6 +80,7 @@ def upsert_audio_metadata(
         zcr_mean: ZCR
         pitch_mean: Pitch
         spectral_centroid: Spectral centroid
+        spectral_bandwidth: Spectral bandwidth
         feature_vector: List 24 số
         mfcc_matrix: MFCC matrix (JSON list)
         
@@ -95,6 +100,7 @@ def upsert_audio_metadata(
         record.zcr_mean = zcr_mean
         record.pitch_mean = pitch_mean
         record.spectral_centroid = spectral_centroid
+        record.spectral_bandwidth = spectral_bandwidth
         record.feature_vector = feature_vector
         record.mfcc_matrix = mfcc_matrix
 

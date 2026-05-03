@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS audio_metadata (
     zcr_mean FLOAT,
     pitch_mean FLOAT,
     spectral_centroid FLOAT,
+    spectral_bandwidth FLOAT,
     
     -- Vector 24D: [energy, zcr, f0, centroid, 20x MFCC]
     -- Dùng cho pgvector search (Stage 1)

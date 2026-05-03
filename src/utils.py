@@ -26,7 +26,7 @@ def save_features_to_csv(output_path="result/features.csv"):
             writer = csv.writer(f)
             writer.writerow([
                 'file_name', 'duration', 'silence_ratio', 'energy_mean', 'zcr_mean',
-                'pitch_mean', 'spectral_centroid', 'feature_vector'
+                'pitch_mean', 'spectral_centroid', 'spectral_bandwidth', 'feature_vector'
             ])
             
             for record in records:
@@ -38,6 +38,7 @@ def save_features_to_csv(output_path="result/features.csv"):
                     f"{record.zcr_mean:.6f}",
                     f"{record.pitch_mean:.6f}",
                     f"{record.spectral_centroid:.6f}",
+                    f"{(record.spectral_bandwidth or 0.0):.6f}",
                     ",".join([f"{x:.6f}" for x in record.feature_vector])
                 ])
         

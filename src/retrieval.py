@@ -38,7 +38,7 @@ def index_audio_file(file_path):
         file_path (str): Đường dẫn tới file WAV
     """
     y, sr, silence_ratio = preprocess_audio(file_path)
-    energy, zcr, f0_mean, spectral_centroid, feature_vector, mfcc_matrix = extract_features(y, sr)
+    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, mfcc_matrix = extract_features(y, sr)
 
     file_name = os.path.basename(file_path)
     upsert_audio_metadata(
@@ -49,6 +49,7 @@ def index_audio_file(file_path):
         zcr_mean=zcr,
         pitch_mean=f0_mean,
         spectral_centroid=spectral_centroid,
+        spectral_bandwidth=spectral_bandwidth,
         feature_vector=feature_vector,
         mfcc_matrix=mfcc_matrix.tolist(),
     )
@@ -90,7 +91,7 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
     """
     # Trích xuất query features
     y, sr, silence_ratio = preprocess_audio(query_file_path)
-    energy, zcr, f0_mean, spectral_centroid, query_vector, query_mfcc_matrix = extract_features(y, sr)
+    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, query_vector, query_mfcc_matrix = extract_features(y, sr)
 
     trace = {
         "query_summary": {
@@ -103,6 +104,7 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
             "zcr": zcr,
             "pitch_mean": f0_mean,
             "spectral_centroid": spectral_centroid,
+            "spectral_bandwidth": spectral_bandwidth,
             "feature_vector_dim": len(query_vector),
             "mfcc_matrix_shape": tuple(query_mfcc_matrix.shape),
         },
@@ -199,7 +201,7 @@ def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, dtw_candidate_po
     print(f"silence_ratio={summary['silence_ratio']:.6f}")
     print(
         "features="
-        f"energy={summary['energy']:.6f}, zcr={summary['zcr']:.6f}, pitch_mean={summary['pitch_mean']:.6f}, centroid={summary['spectral_centroid']:.6f}"
+        f"energy={summary['energy']:.6f}, zcr={summary['zcr']:.6f}, pitch_mean={summary['pitch_mean']:.6f}, centroid={summary['spectral_centroid']:.6f}, bandwidth={summary['spectral_bandwidth']:.6f}"
     )
     print(f"feature_vector_dim={summary['feature_vector_dim']}, mfcc_matrix_shape={summary['mfcc_matrix_shape']}")
 
