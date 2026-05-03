@@ -6,8 +6,8 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
-from audio_search.database import init_db
-from audio_search.search_engine import build_search_trace, index_folder
+from src.database import init_db
+from src.retrieval import build_search_trace, index_folder
 
 app = FastAPI(title="Audio Search UI")
 
