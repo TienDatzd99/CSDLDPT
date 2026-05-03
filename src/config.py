@@ -21,8 +21,10 @@ DEFAULT_METRIC = "cosine"  # "cosine", "euclidean", "dtw"
 DEFAULT_TOP_K = 5
 DEFAULT_DTW_POOL = 30
 
-# Dataset folder
+# Dataset folder (relative to project root)
+from pathlib import Path
+_project_root = Path(__file__).parent.parent
 AUDIO_DATASET_FOLDER = os.getenv(
     "AUDIO_DATASET_FOLDER",
-    "/Users/tiendat/CSDLDPT/male_dataset_500"
+    str(_project_root / "data" / "dataset" / "male_dataset_500")
 )

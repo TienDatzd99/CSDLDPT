@@ -13,7 +13,7 @@ app = FastAPI(title="Audio Search UI")
 
 # Resolve DATASET_FOLDER relative to the project root.
 _project_root = Path(__file__).parent
-_default_dataset = _project_root / "male_dataset_500"
+_default_dataset = _project_root / "data" / "dataset" / "male_dataset_500"
 DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", str(_default_dataset))).resolve()
 
 
