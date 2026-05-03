@@ -2,7 +2,8 @@ import argparse
 import os
 from pathlib import Path
 
-from audio_search.audio_processor import DURATION, calculate_dtw_distance, extract_features, preprocess_audio
+from audio_search.audio_processor import DURATION, preprocess_audio
+from audio_search.feature_extraction import extract_features, calculate_dtw_distance
 from audio_search.database import init_db, search_vector_candidates, upsert_audio_metadata
 
 
