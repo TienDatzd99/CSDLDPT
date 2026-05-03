@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.." || exit
 source .venv/bin/activate 2>/dev/null || echo "⚠ Virtual environment not activated"
 
 python3 -c "
-from audio_search.search_engine import index_folder
+from src.retrieval import index_folder
 import os
 
 dataset = os.path.expanduser('$DATASET_PATH')

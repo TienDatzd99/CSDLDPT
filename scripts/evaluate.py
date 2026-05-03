@@ -2,8 +2,8 @@ import argparse
 import random
 from pathlib import Path
 
-from database import init_db, list_indexed_file_names
-from search_engine import search_similar_audio
+from src.database import init_db, list_indexed_file_names
+from src.retrieval import search_similar_audio
 
 
 def evaluate_self_retrieval(dataset_folder, sample_size=100, top_k=5, dtw_candidate_pool=30):
@@ -57,7 +57,6 @@ def evaluate_self_retrieval(dataset_folder, sample_size=100, top_k=5, dtw_candid
         print(f"Metric: {metric}")
         print(f"  Hit@1: {h1:.4f}")
         print(f"  Hit@{top_k}: {hk:.4f}\n")
-
 
 
 def main():

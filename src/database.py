@@ -144,3 +144,13 @@ def search_vector_candidates(query_vector, top_k=5, metric="cosine"):
         return results
     finally:
         session.close()
+
+
+def list_indexed_file_names():
+    """Return all indexed file names currently stored in the database."""
+    session = SessionLocal()
+    try:
+        rows = session.query(AudioMetadata.file_name).order_by(AudioMetadata.file_name).all()
+        return [row[0] for row in rows]
+    finally:
+        session.close()

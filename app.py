@@ -11,9 +11,9 @@ from src.retrieval import build_search_trace, index_folder
 
 app = FastAPI(title="Audio Search UI")
 
-# Resolve DATASET_FOLDER relative to app location
-_audio_search_dir = Path(__file__).parent.parent  # /Users/tiendat/CSDLDPT
-_default_dataset = _audio_search_dir / "male_dataset_500"
+# Resolve DATASET_FOLDER relative to the project root.
+_project_root = Path(__file__).parent
+_default_dataset = _project_root / "male_dataset_500"
 DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", str(_default_dataset))).resolve()
 
 
@@ -174,7 +174,7 @@ def render_page(title, message="", trace=None):
                   <h2>Index dữ liệu</h2>
                   <form method="post" action="/index">
                     <label for="folder_path">Thư mục dữ liệu WAV</label>
-                    <input id="folder_path" name="folder_path" type="text" value="../male_dataset_500" />
+                    <input id="folder_path" name="folder_path" type="text" value="./male_dataset_500" />
                     <div class="actions">
                       <button type="submit">Index vào CSDL</button>
                     </div>
@@ -251,25 +251,17 @@ def home():
 @app.get("/audio/{file_name:path}")
 def serve_audio(file_name: str):
     try:
-        # Construct the full path and resolve it
         audio_path = (DATASET_FOLDER / file_name).resolve()
-        
-        # Security check: ensure the resolved path is within DATASET_FOLDER
         audio_path.relative_to(DATASET_FOLDER)
-        
-        # Check if file exists
         if not audio_path.exists() or not audio_path.is_file():
             return HTMLResponse("File not found", status_code=404)
-        
         return FileResponse(audio_path, media_type="audio/wav")
     except (ValueError, FileNotFoundError):
-        # ValueError: audio_path is not relative to DATASET_FOLDER (security issue)
-        # FileNotFoundError: path doesn't exist
         return HTMLResponse("File not found", status_code=404)
 
 
 @app.post("/index", response_class=HTMLResponse)
-def index_data(folder_path: str = Form(default="../male_dataset_500")):
+def index_data(folder_path: str = Form(default="./male_dataset_500")):
     init_db()
     index_folder(folder_path)
     return render_page("Audio Search UI", message=f"Đã index dữ liệu từ {folder_path}.")

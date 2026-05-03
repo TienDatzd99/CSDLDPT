@@ -3,7 +3,7 @@
 Sử dụng: python scripts/index_dataset.py --folder /path/to/male_dataset_500
 """
 import argparse
-from audio_search.search_engine import index_folder
+from src.retrieval import index_folder
 
 
 def main():
