@@ -1,21 +1,16 @@
 import base64
-import io
 import os
 import tempfile
 from pathlib import Path
 
-import librosa
-import librosa.display
-import matplotlib
 import numpy as np
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import soundfile as sf
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from src.database import init_db
-from src.feature_extraction import preprocess_audio
+from src.feature_extraction import preprocess_audio, extract_features, analyze_audio_frames
 from src.retrieval import build_search_trace, index_folder
 
 app = FastAPI(title="Audio Search UI")
@@ -26,35 +21,85 @@ _default_dataset = _project_root / "data" / "dataset" / "male_dataset_500"
 DATASET_FOLDER = Path(os.getenv("AUDIO_DATASET_FOLDER", str(_default_dataset))).resolve()
 
 
-def _figure_to_data_uri(fig):
-  """Convert a matplotlib figure into a base64 data URI."""
-  buffer = io.BytesIO()
-  fig.savefig(buffer, format="png", dpi=120, bbox_inches="tight")
-  plt.close(fig)
-  encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-  return f"data:image/png;base64,{encoded}"
+def _svg_to_data_uri(svg_markup):
+  """Convert SVG markup into a base64 data URI."""
+  encoded = base64.b64encode(svg_markup.encode("utf-8")).decode("ascii")
+  return f"data:image/svg+xml;base64,{encoded}"
 
 
 def build_visualizations(file_path):
   """Build waveform and spectrogram visualizations for the query audio."""
   y, sr, _ = preprocess_audio(file_path)
-  times = np.linspace(0, len(y) / sr, num=len(y), endpoint=False)
+  *_, spectral_matrix = extract_features(y, sr)
 
-  fig_wave, ax_wave = plt.subplots(figsize=(8.5, 2.5))
-  ax_wave.plot(times, y, color="#7a4f2b", linewidth=0.8)
-  ax_wave.set_title("Waveform")
-  ax_wave.set_xlabel("Time (s)")
-  ax_wave.set_ylabel("Amplitude")
-  ax_wave.grid(alpha=0.25)
-  waveform_uri = _figure_to_data_uri(fig_wave)
+  width = 900
+  height = 220
+  mid_y = height / 2.0
+  amplitude = float(np.max(np.abs(y))) or 1.0
+  step = max(len(y) // 800, 1)
+  sampled = y[::step]
+  if sampled.size < 2:
+    sampled = np.zeros(2, dtype=np.float32)
+  x_points = np.linspace(0, width, num=sampled.size)
+  y_points = mid_y - (sampled / amplitude) * (height * 0.42)
+  points = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(x_points, y_points))
+  waveform_svg = f"""
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
+    <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
+    <line x1="0" y1="{mid_y}" x2="{width}" y2="{mid_y}" stroke="#d6c4b2" stroke-width="1" />
+    <polyline fill="none" stroke="#7a4f2b" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" points="{points}" />
+    <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Waveform</text>
+  </svg>
+  """
+  waveform_uri = _svg_to_data_uri(waveform_svg)
 
-  stft = librosa.stft(y)
-  db_spec = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
-  fig_spec, ax_spec = plt.subplots(figsize=(8.5, 3.0))
-  img = librosa.display.specshow(db_spec, sr=sr, x_axis="time", y_axis="hz", ax=ax_spec, cmap="magma")
-  ax_spec.set_title("Spectrogram (dB)")
-  fig_spec.colorbar(img, ax=ax_spec, format="%+2.0f dB")
-  spectrogram_uri = _figure_to_data_uri(fig_spec)
+  if spectral_matrix.size == 0:
+    spectrogram_svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
+      <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
+      <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Spectrogram</text>
+      <text x="18" y="62" fill="#6b6258" font-size="14" font-family="Georgia, serif">No spectral data</text>
+    </svg>
+    """
+    spectrogram_uri = _svg_to_data_uri(spectrogram_svg)
+  else:
+    max_frames = 160
+    if spectral_matrix.shape[0] > max_frames:
+      indices = np.linspace(0, spectral_matrix.shape[0] - 1, num=max_frames, dtype=int)
+      spectral_matrix = spectral_matrix[indices]
+
+    matrix = spectral_matrix.T
+    rows, cols = matrix.shape
+    plot_x = 18
+    plot_y = 40
+    plot_width = 850
+    plot_height = 150
+    cell_w = plot_width / max(cols, 1)
+    cell_h = plot_height / max(rows, 1)
+    max_value = float(np.max(matrix)) or 1.0
+
+    rects = []
+    for row_idx in range(rows):
+      for col_idx in range(cols):
+        value = matrix[row_idx, col_idx] / max_value
+        value = float(np.clip(value, 0.0, 1.0))
+        red = int(28 + 198 * value)
+        green = int(18 + 62 * value)
+        blue = int(42 + 18 * value)
+        rects.append(
+          f'<rect x="{plot_x + col_idx * cell_w:.2f}" y="{plot_y + (rows - 1 - row_idx) * cell_h:.2f}" '
+          f'width="{cell_w + 0.3:.2f}" height="{cell_h + 0.3:.2f}" fill="rgb({red},{green},{blue})" />'
+        )
+
+    spectrogram_svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
+      <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
+      <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Spectrogram</text>
+      {''.join(rects)}
+      <rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d6c4b2" stroke-width="1" />
+    </svg>
+    """
+    spectrogram_uri = _svg_to_data_uri(spectrogram_svg)
 
   return waveform_uri, spectrogram_uri
 
@@ -108,7 +153,11 @@ def render_page(title, message="", trace=None):
             <div><span>Spectral centroid</span><strong>{query_summary['spectral_centroid']:.6f}</strong></div>
             <div><span>Spectral bandwidth</span><strong>{query_summary['spectral_bandwidth']:.6f}</strong></div>
             <div><span>Feature vector</span><strong>{query_summary['feature_vector_dim']} chiều</strong></div>
-            <div><span>MFCC shape</span><strong>{query_summary['mfcc_matrix_shape']}</strong></div>
+            <div><span>Spectral matrix shape</span><strong>{query_summary['spectral_matrix_shape']}</strong></div>
+            <div><span>Frame count</span><strong>{query_summary['frame_count']}</strong></div>
+            <div><span>Frame energy mean</span><strong>{query_summary['frame_energy_mean']:.6f}</strong></div>
+            <div><span>Frame ZCR mean</span><strong>{query_summary['frame_zcr_mean']:.6f}</strong></div>
+            <div><span>Frame silent ratio</span><strong>{query_summary['frame_silent_ratio']:.6f}</strong></div>
           </div>
         </section>
         """
@@ -250,7 +299,7 @@ def render_page(title, message="", trace=None):
                   <h2>Tìm kiếm file âm thanh</h2>
                   <form method="post" action="/search" enctype="multipart/form-data">
                     <label for="query_file">File truy vấn</label>
-                    <input id="query_file" name="query_file" type="file" accept="audio/*" required />
+                    <input id="query_file" name="query_file" type="file" accept=".wav,audio/wav" required />
                     <div class="grid-3" style="margin-top: 14px;">
                       <div>
                         <label for="metric">Metric</label>
@@ -351,23 +400,32 @@ async def search_audio(
         temp_path = tmp_file.name
 
     try:
+      try:
         waveform_image_uri, spectrogram_image_uri = build_visualizations(temp_path)
+        y, sr, _ = preprocess_audio(temp_path)
+        frame_stats = analyze_audio_frames(y, sr)
         trace = build_search_trace(
-            query_file_path=temp_path,
-            metric=metric,
-            top_k=top_k,
-            dtw_candidate_pool=dtw_candidate_pool,
+          query_file_path=temp_path,
+          metric=metric,
+          top_k=top_k,
+          dtw_candidate_pool=dtw_candidate_pool,
         )
+      except sf.LibsndfileError:
         return render_page(
-            "Audio Search UI",
-            message=f"Đã tìm kiếm với metric={metric}, top_k={top_k}.",
-            trace={
-                **trace,
-                "query_audio_data_uri": query_audio_data_uri,
-                "waveform_image_uri": waveform_image_uri,
-                "spectrogram_image_uri": spectrogram_image_uri,
-            },
+          "Audio Search UI",
+          message="File tải lên chưa được hỗ trợ. Hãy dùng file WAV (16 kHz/mono nếu có thể).",
         )
+      return render_page(
+        "Audio Search UI",
+        message=f"Đã tìm kiếm với metric={metric}, top_k={top_k}.",
+        trace={
+          **trace,
+          "query_summary": {**trace.get("query_summary", {}), **frame_stats},
+          "query_audio_data_uri": query_audio_data_uri,
+          "waveform_image_uri": waveform_image_uri,
+          "spectrogram_image_uri": spectrogram_image_uri,
+        },
+      )
     finally:
         try:
             os.unlink(temp_path)

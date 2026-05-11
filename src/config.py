@@ -1,5 +1,5 @@
 """
-Configuration và hằng số cho hệ thống tìm kiếm giọng nói nam giới.
+Configuration and constants for the audio search system.
 """
 import os
 
@@ -8,7 +8,14 @@ DURATION = 5.0  # Chuẩn hóa độ dài (giây)
 SR = 16000      # Sample rate (Hz)
 
 # Feature extraction settings
-MFCC_N_COEFFS = 20  # Số hệ số MFCC
+SPECTRAL_BAND_COUNT = 24  # Số băng tần phổ dùng cho vector/DTW
+STFT_N_PER_SEG = 512
+STFT_OVERLAP = 256
+FRAME_LENGTH_SEC = 0.025
+FRAME_HOP_SEC = 0.010
+FRAME_SILENCE_RATIO = 0.10
+FRAME_SILENCE_PERCENTILE = 10.0
+FRAME_SILENCE_MULTIPLIER = 3.0  # multiplier applied to low-percentile frame energy to detect silence
 
 # Database settings
 DATABASE_URL = os.getenv(

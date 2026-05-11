@@ -1,5 +1,5 @@
 """
-Cơ sở dữ liệu PostgreSQL + pgvector cho lưu trữ và tìm kiếm đặc trưng âm thanh.
+PostgreSQL + pgvector storage for audio features.
 """
 from sqlalchemy import create_engine, Column, Integer, String, Float, JSON, text
 from pgvector.sqlalchemy import Vector
@@ -26,7 +26,7 @@ class AudioMetadata(Base):
     - spectral_centroid: Tâm trọng quang phổ
     - spectral_bandwidth: Độ rộng phổ
     - feature_vector: Vector 24D (pgvector) - dùng cho Stage 1 search
-    - mfcc_matrix: Ma trận MFCC 157×20 (JSON) - dùng cho Stage 2 DTW
+    - spectral_matrix: Ma trận phổ theo thời gian 24 băng tần (JSON) - dùng cho Stage 2 DTW
     """
     __tablename__ = "audio_metadata"
 
@@ -40,13 +40,13 @@ class AudioMetadata(Base):
     spectral_centroid = Column(Float)
     spectral_bandwidth = Column(Float)
     
-    # Vector 24 chiều: [energy, zcr, f0, centroid, 20x mfcc]
+    # Vector 24 chiều: trung bình 24 băng tần phổ theo thời gian
     # Dùng cho pgvector cosine/euclidean search (nhanh)
     feature_vector = Column(Vector(24))
     
-    # MFCC matrix 157×20 (JSON)
+    # Spectral matrix 157×24 (JSON)
     # Dùng cho DTW re-ranking (chính xác)
-    mfcc_matrix = Column(JSON)
+    spectral_matrix = Column("mfcc_matrix", JSON)
 
 
 def init_db():
@@ -67,7 +67,7 @@ def upsert_audio_metadata(
     spectral_centroid,
     spectral_bandwidth,
     feature_vector,
-    mfcc_matrix,
+    spectral_matrix,
 ):
     """
     Thêm hoặc cập nhật metadata của file âm thanh.
@@ -82,7 +82,7 @@ def upsert_audio_metadata(
         spectral_centroid: Spectral centroid
         spectral_bandwidth: Spectral bandwidth
         feature_vector: List 24 số
-        mfcc_matrix: MFCC matrix (JSON list)
+        spectral_matrix: Spectral matrix (JSON list)
         
     Returns:
         AudioMetadata: Record đã được lưu
@@ -102,7 +102,7 @@ def upsert_audio_metadata(
         record.spectral_centroid = spectral_centroid
         record.spectral_bandwidth = spectral_bandwidth
         record.feature_vector = feature_vector
-        record.mfcc_matrix = mfcc_matrix
+        record.spectral_matrix = spectral_matrix
 
         session.commit()
         session.refresh(record)
@@ -121,7 +121,7 @@ def search_vector_candidates(query_vector, top_k=5, metric="cosine"):
         metric: "cosine" hoặc "euclidean"
         
     Returns:
-        list: Danh sách dict chứa {id, file_name, distance, mfcc_matrix}
+        list: Danh sách dict chứa {id, file_name, distance, spectral_matrix}
     """
     session = SessionLocal()
     try:
@@ -145,7 +145,7 @@ def search_vector_candidates(query_vector, top_k=5, metric="cosine"):
                 "id": record.id,
                 "file_name": record.file_name,
                 "distance": float(distance),
-                "mfcc_matrix": record.mfcc_matrix,
+                "spectral_matrix": record.spectral_matrix,
             })
         return results
     finally:

@@ -1,11 +1,9 @@
 fastapi
 uvicorn
 python-multipart
-librosa
 soundfile
 numpy
 scipy
-matplotlib
 psycopg2-binary
 pgvector
 sqlalchemy

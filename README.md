@@ -3,7 +3,7 @@
 ## 📋 Tổng Quan
 
 Hệ thống tìm kiếm giọng nói nam giới sử dụng:
-- **Feature Extraction**: 24D vectors (energy, ZCR, pitch, spectral centroid, 20x MFCC)
+- **Feature Extraction**: 24D vectors (24 spectral band log-energies)
 - **Database**: PostgreSQL + pgvector (vector similarity search)
 - **Search Pipeline**: 2-stage (pgvector fast search + DTW re-ranking)
 - **Web UI**: FastAPI + HTML/CSS interactive interface
@@ -126,7 +126,7 @@ Chỉnh sửa `src/config.py`:
 ```python
 DURATION = 5.0              # Chuẩn hóa độ dài (giây)
 SR = 16000                  # Sample rate (Hz)
-MFCC_N_COEFFS = 20         # Số MFCC coefficients
+SPECTRAL_BAND_COUNT = 24   # Số băng tần phổ
 DEFAULT_METRIC = "cosine"   # "cosine", "euclidean", "dtw"
 DEFAULT_TOP_K = 5           # Số kết quả trả về
 DEFAULT_DTW_POOL = 30       # Candidate pool cho DTW re-ranking
@@ -135,23 +135,28 @@ DEFAULT_DTW_POOL = 30       # Candidate pool cho DTW re-ranking
 ## 📊 Features
 
 ### 24D Feature Vector
+- 24 spectral band log-energies (24)
+
+### Scalar Features
 - Energy (1)
 - ZCR - Zero Crossing Rate (1)
 - Pitch/F0 - Fundamental Frequency (1)
 - Spectral Centroid (1)
-- MFCC - Mel-Frequency Cepstral Coefficients (20)
+- Spectral Bandwidth (1)
+- Spectral Rolloff (1)
+- Spectral Flatness (1)
 
 ### Search Metrics
 - **Cosine**: Fast vector similarity (Stage 1)
 - **Euclidean**: L2 distance (Stage 1)
-- **DTW**: Dynamic Time Warping on MFCC matrices (Stage 2, accurate but slower)
+- **DTW**: Dynamic Time Warping on spectral band matrices (Stage 2, accurate but slower)
 
 ## 📦 Dependencies
 
 ```
 fastapi          # Web framework
 uvicorn          # ASGI server
-librosa          # Audio processing
+soundfile        # Audio loading
 numpy/scipy      # Numerical computing
 psycopg2-binary  # PostgreSQL driver
 pgvector         # Vector similarity
@@ -172,7 +177,7 @@ CREATE TABLE audio_metadata (
     pitch_mean FLOAT,
     spectral_centroid FLOAT,
     feature_vector vector(24),      -- pgvector for fast search
-    mfcc_matrix JSON,               -- For DTW re-ranking
+    spectral_matrix JSON,           -- For DTW re-ranking
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```

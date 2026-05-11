@@ -1,12 +1,12 @@
 """
-Logic tìm kiếm và xếp hạng kết quả (retrieval + ranking).
-- Stage 1: Vector search (nhanh)
-- Stage 2: DTW re-ranking (chính xác)
+Search and ranking logic.
+- Stage 1: Vector search (fast)
+- Stage 2: DTW re-ranking (accurate)
 """
 import os
 from pathlib import Path
 from src.feature_extraction import (
-    preprocess_audio, extract_features, calculate_dtw_distance
+    preprocess_audio, extract_features, calculate_dtw_distance, analyze_audio_frames
 )
 from src.database import search_vector_candidates, upsert_audio_metadata, SessionLocal, AudioMetadata
 from src.config import DURATION, DEFAULT_METRIC, DEFAULT_TOP_K, DEFAULT_DTW_POOL, AUDIO_DATASET_FOLDER
@@ -38,7 +38,7 @@ def index_audio_file(file_path):
         file_path (str): Đường dẫn tới file WAV
     """
     y, sr, silence_ratio = preprocess_audio(file_path)
-    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, mfcc_matrix = extract_features(y, sr)
+    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, spectral_matrix = extract_features(y, sr)
 
     file_name = os.path.basename(file_path)
     upsert_audio_metadata(
@@ -51,7 +51,7 @@ def index_audio_file(file_path):
         spectral_centroid=spectral_centroid,
         spectral_bandwidth=spectral_bandwidth,
         feature_vector=feature_vector,
-        mfcc_matrix=mfcc_matrix.tolist(),
+        spectral_matrix=spectral_matrix.tolist(),
     )
 
 
@@ -91,7 +91,8 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
     """
     # Trích xuất query features
     y, sr, silence_ratio = preprocess_audio(query_file_path)
-    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, query_vector, query_mfcc_matrix = extract_features(y, sr)
+    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, query_vector, query_spectral_matrix = extract_features(y, sr)
+    frame_stats = analyze_audio_frames(y, sr)
 
     trace = {
         "query_summary": {
@@ -106,7 +107,8 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
             "spectral_centroid": spectral_centroid,
             "spectral_bandwidth": spectral_bandwidth,
             "feature_vector_dim": len(query_vector),
-            "mfcc_matrix_shape": tuple(query_mfcc_matrix.shape),
+            "spectral_matrix_shape": tuple(query_spectral_matrix.shape),
+            **frame_stats,
         },
         "vector_candidates": [],
         "final_results": [],
@@ -133,9 +135,9 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
     if metric == "dtw":
         dtw_scored = []
         for candidate in vector_candidates:
-            if not candidate["mfcc_matrix"]:
+            if not candidate["spectral_matrix"]:
                 continue
-            dtw_distance = calculate_dtw_distance(query_mfcc_matrix, candidate["mfcc_matrix"])
+            dtw_distance = calculate_dtw_distance(query_spectral_matrix, candidate["spectral_matrix"])
             dtw_scored.append(
                 {
                     "id": candidate["id"],
@@ -203,7 +205,13 @@ def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, dtw_candidate_po
         "features="
         f"energy={summary['energy']:.6f}, zcr={summary['zcr']:.6f}, pitch_mean={summary['pitch_mean']:.6f}, centroid={summary['spectral_centroid']:.6f}, bandwidth={summary['spectral_bandwidth']:.6f}"
     )
-    print(f"feature_vector_dim={summary['feature_vector_dim']}, mfcc_matrix_shape={summary['mfcc_matrix_shape']}")
+    print(f"feature_vector_dim={summary['feature_vector_dim']}, spectral_matrix_shape={summary['spectral_matrix_shape']}")
+    print(
+        f"frame_stats=frames:{summary['frame_count']}, "
+        f"frame_energy_mean:{summary['frame_energy_mean']:.6f}, "
+        f"frame_zcr_mean:{summary['frame_zcr_mean']:.6f}, "
+        f"frame_silent_ratio:{summary['frame_silent_ratio']:.6f}"
+    )
 
     print("\n=== Stage 1: Vector Candidate Search ===")
     for idx, item in enumerate(trace["vector_candidates"][:top_k], start=1):
