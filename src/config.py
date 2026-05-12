@@ -8,7 +8,7 @@ DURATION = 5.0  # Chuẩn hóa độ dài (giây)
 SR = 16000      # Sample rate (Hz)
 
 # Feature extraction settings
-SPECTRAL_BAND_COUNT = 24  # Số băng tần phổ dùng cho vector/DTW
+SPECTRAL_BAND_COUNT = 24  # Số băng tần phổ dùng cho feature vector
 STFT_N_PER_SEG = 512
 STFT_OVERLAP = 256
 FRAME_LENGTH_SEC = 0.025
@@ -23,10 +23,9 @@ DATABASE_URL = os.getenv(
     "postgresql://user:password@localhost:5432/audio_db"
 )
 
-# Search settings
-DEFAULT_METRIC = "cosine"  # "cosine", "euclidean", "dtw"
+# Search settings (Euclidean distance only)
+DEFAULT_METRIC = "euclidean"
 DEFAULT_TOP_K = 5
-DEFAULT_DTW_POOL = 30
 
 # Dataset folder (relative to project root)
 from pathlib import Path

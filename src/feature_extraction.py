@@ -261,23 +261,20 @@ def preprocess_audio(file_path):
 def extract_features(y, sr):
     """
     Trích xuất đặc trưng từ âm thanh:
-    - Energy (1)
-    - ZCR (1)
-    - Pitch/F0 (1)
-    - Spectral centroid (1)
-    - Spectral bandwidth (1)
-    - Spectral rolloff (1)
-    - Spectral flatness (1)
-    - 24 band log-energy values (24)
+    - Energy (1) - raw mean squared
+    - ZCR (1) - zero crossing rate
+    - Spectral centroid (1) - normalized to [0, 1]
+    - Spectral bandwidth (1) - normalized to [0, 1]
+    - 24 band log-energy values (24) - log scale
+    = 28-D normalized vector cho Euclidean/Cosine search
     
     Args:
         y: Mảng âm thanh (đã tiền xử lý)
         sr: Sample rate
         
     Returns:
-        tuple: (energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, spectral_matrix)
-            - feature_vector: List 24 chiều cho pgvector
-            - spectral_matrix: np.array (n_frames, 24) cho DTW
+        tuple: (energy, zcr, spectral_centroid, spectral_bandwidth, feature_vector)
+            - feature_vector: List 28 chiều [energy, zcr, centroid_norm, bandwidth_norm, + 24-band] cho pgvector
     """
     energy = float(np.mean(y ** 2))
 
@@ -285,45 +282,33 @@ def extract_features(y, sr):
     signs[signs == 0.0] = 1.0
     zcr = float(np.count_nonzero(np.diff(signs)) / max(len(y) - 1, 1))
 
-    f0_mean = _estimate_pitch_autocorrelation(y, sr)
-
     spectral_centroid, spectral_bandwidth, spectral_rolloff, spectral_flatness, spectral_matrix = _spectral_profile(y, sr)
 
+    # Compute 24-band mean log-energy
     if spectral_matrix.size == 0:
-        feature_vector = np.zeros(SPECTRAL_BAND_COUNT, dtype=np.float32)
+        band_means = np.zeros(SPECTRAL_BAND_COUNT, dtype=np.float32)
     else:
-        feature_vector = np.mean(spectral_matrix, axis=0).astype(np.float32, copy=False)
+        band_means = np.mean(spectral_matrix, axis=0).astype(np.float32, copy=False)
+
+    # Normalize centroid and bandwidth to [0, 1] for better scale balance
+    # Centroid: [0, sr/2] -> [0, 1]
+    centroid_normalized = spectral_centroid / (sr / 2.0)
+    # Bandwidth: typically [0, sr/2] -> [0, 1]
+    bandwidth_normalized = spectral_bandwidth / (sr / 2.0)
+
+    # Combine into 28-D: [energy, zcr, centroid_norm, bandwidth_norm, + 24-band]
+    feature_vector = np.concatenate([
+        [energy, zcr, centroid_normalized, bandwidth_normalized],
+        band_means
+    ]).astype(np.float32, copy=False)
 
     return (
         energy,
         zcr,
-        f0_mean,
         spectral_centroid,
         spectral_bandwidth,
         feature_vector.tolist(),
-        spectral_matrix,
     )
-
-
-def cosine_distance(vec_a, vec_b):
-    """
-    Tính khoảng cách Cosine giữa 2 vector.
-    
-    distance = 1 - cosine_similarity
-    
-    Args:
-        vec_a, vec_b: Hai vector (list hoặc np.array)
-        
-    Returns:
-        float: Cosine distance (0-1)
-    """
-    a = np.asarray(vec_a, dtype=np.float32)
-    b = np.asarray(vec_b, dtype=np.float32)
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
-    if denom == 0:
-        return 1.0
-    cosine_sim = float(np.dot(a, b) / denom)
-    return 1.0 - cosine_sim
 
 
 def euclidean_distance(vec_a, vec_b):
@@ -342,35 +327,3 @@ def euclidean_distance(vec_a, vec_b):
     b = np.asarray(vec_b, dtype=np.float32)
     return float(np.linalg.norm(a - b))
 
-
-def calculate_dtw_distance(spectral_matrix_query, spectral_matrix_db):
-    """
-    Tính Dynamic Time Warping (DTW) distance giữa 2 ma trận phổ.
-    
-    Dùng để so sánh chi tiết theo thời gian (re-ranking).
-    
-    Args:
-        spectral_matrix_query: Spectral matrix của query (n_frames, 24)
-        spectral_matrix_db: Spectral matrix từ database (n_frames, 24)
-        
-    Returns:
-        float: DTW distance (thấp = giống, cao = khác)
-    """
-    from scipy.spatial.distance import cdist
-
-    query = np.asarray(spectral_matrix_query, dtype=np.float32)
-    target = np.asarray(spectral_matrix_db, dtype=np.float32)
-
-    if query.size == 0 or target.size == 0:
-        return float("inf")
-
-    cost = cdist(query, target, metric="euclidean")
-    n_rows, n_cols = cost.shape
-    dtw = np.full((n_rows + 1, n_cols + 1), np.inf, dtype=np.float32)
-    dtw[0, 0] = 0.0
-
-    for i in range(1, n_rows + 1):
-        for j in range(1, n_cols + 1):
-            dtw[i, j] = cost[i - 1, j - 1] + min(dtw[i - 1, j], dtw[i, j - 1], dtw[i - 1, j - 1])
-
-    return float(dtw[n_rows, n_cols] / max(n_rows + n_cols, 1))

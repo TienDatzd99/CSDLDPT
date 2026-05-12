@@ -25,8 +25,7 @@ class AudioMetadata(Base):
     - pitch_mean: Tần số cơ bản
     - spectral_centroid: Tâm trọng quang phổ
     - spectral_bandwidth: Độ rộng phổ
-    - feature_vector: Vector 24D (pgvector) - dùng cho Stage 1 search
-    - spectral_matrix: Ma trận phổ theo thời gian 24 băng tần (JSON) - dùng cho Stage 2 DTW
+    - feature_vector: Vector 28D (pgvector) - dùng cho Euclidean/Cosine search
     """
     __tablename__ = "audio_metadata"
 
@@ -40,13 +39,9 @@ class AudioMetadata(Base):
     spectral_centroid = Column(Float)
     spectral_bandwidth = Column(Float)
     
-    # Vector 24 chiều: trung bình 24 băng tần phổ theo thời gian
-    # Dùng cho pgvector cosine/euclidean search (nhanh)
-    feature_vector = Column(Vector(24))
-    
-    # Spectral matrix 157×24 (JSON)
-    # Dùng cho DTW re-ranking (chính xác)
-    spectral_matrix = Column("mfcc_matrix", JSON)
+    # Vector 28 chiều: [energy, zcr, spectral_centroid, spectral_bandwidth, + 24-band log-energy]
+    # Dùng cho pgvector cosine/euclidean search
+    feature_vector = Column(Vector(28))
 
 
 def init_db():
@@ -67,7 +62,6 @@ def upsert_audio_metadata(
     spectral_centroid,
     spectral_bandwidth,
     feature_vector,
-    spectral_matrix,
 ):
     """
     Thêm hoặc cập nhật metadata của file âm thanh.
@@ -81,8 +75,7 @@ def upsert_audio_metadata(
         pitch_mean: Pitch
         spectral_centroid: Spectral centroid
         spectral_bandwidth: Spectral bandwidth
-        feature_vector: List 24 số
-        spectral_matrix: Spectral matrix (JSON list)
+        feature_vector: List 28 số (energy, zcr, centroid, bandwidth, + 24-band)
         
     Returns:
         AudioMetadata: Record đã được lưu
@@ -102,7 +95,6 @@ def upsert_audio_metadata(
         record.spectral_centroid = spectral_centroid
         record.spectral_bandwidth = spectral_bandwidth
         record.feature_vector = feature_vector
-        record.spectral_matrix = spectral_matrix
 
         session.commit()
         session.refresh(record)
@@ -113,15 +105,15 @@ def upsert_audio_metadata(
 
 def search_vector_candidates(query_vector, top_k=5, metric="cosine"):
     """
-    Tìm kiếm vector candidates bằng pgvector (Stage 1 - nhanh).
+    Tìm kiếm vector candidates bằng pgvector (Euclidean/Cosine).
     
     Args:
-        query_vector: Query vector (24D)
+        query_vector: Query vector (28D: energy, zcr, centroid, bandwidth, + 24-band)
         top_k: Số kết quả trả về
         metric: "cosine" hoặc "euclidean"
         
     Returns:
-        list: Danh sách dict chứa {id, file_name, distance, spectral_matrix}
+        list: Danh sách dict chứa {id, file_name, distance}
     """
     session = SessionLocal()
     try:
@@ -145,7 +137,6 @@ def search_vector_candidates(query_vector, top_k=5, metric="cosine"):
                 "id": record.id,
                 "file_name": record.file_name,
                 "distance": float(distance),
-                "spectral_matrix": record.spectral_matrix,
             })
         return results
     finally:

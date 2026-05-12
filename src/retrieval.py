@@ -1,15 +1,13 @@
 """
-Search and ranking logic.
-- Stage 1: Vector search (fast)
-- Stage 2: DTW re-ranking (accurate)
+Search and ranking logic using Euclidean/Cosine distance (vector search).
 """
 import os
 from pathlib import Path
 from src.feature_extraction import (
-    preprocess_audio, extract_features, calculate_dtw_distance, analyze_audio_frames
+    preprocess_audio, extract_features, analyze_audio_frames
 )
 from src.database import search_vector_candidates, upsert_audio_metadata, SessionLocal, AudioMetadata
-from src.config import DURATION, DEFAULT_METRIC, DEFAULT_TOP_K, DEFAULT_DTW_POOL, AUDIO_DATASET_FOLDER
+from src.config import DURATION, DEFAULT_METRIC, DEFAULT_TOP_K, AUDIO_DATASET_FOLDER
 
 
 def distance_to_similarity(distance, metric):
@@ -18,7 +16,7 @@ def distance_to_similarity(distance, metric):
     
     Args:
         distance: Khoảng cách
-        metric: "cosine", "euclidean", hoặc "dtw"
+        metric: "cosine" hoặc "euclidean"
         
     Returns:
         float: Similarity (0-1)
@@ -26,7 +24,7 @@ def distance_to_similarity(distance, metric):
     if metric == "cosine":
         # cosine_distance = 1 - cosine_similarity
         return max(0.0, min(1.0, 1.0 - float(distance)))
-    # Monotonic transform cho distance-based metrics
+    # Euclidean: normalize
     return 1.0 / (1.0 + float(distance))
 
 
@@ -38,7 +36,7 @@ def index_audio_file(file_path):
         file_path (str): Đường dẫn tới file WAV
     """
     y, sr, silence_ratio = preprocess_audio(file_path)
-    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, feature_vector, spectral_matrix = extract_features(y, sr)
+    energy, zcr, spectral_centroid, spectral_bandwidth, feature_vector = extract_features(y, sr)
 
     file_name = os.path.basename(file_path)
     upsert_audio_metadata(
@@ -47,11 +45,10 @@ def index_audio_file(file_path):
         silence_ratio=silence_ratio,
         energy_mean=energy,
         zcr_mean=zcr,
-        pitch_mean=f0_mean,
+        pitch_mean=0.0,  # Deprecated: not used
         spectral_centroid=spectral_centroid,
         spectral_bandwidth=spectral_bandwidth,
         feature_vector=feature_vector,
-        spectral_matrix=spectral_matrix.tolist(),
     )
 
 
@@ -73,25 +70,21 @@ def index_folder(folder_path, pattern="*.wav"):
             print(f"✗ Error indexing {file_path.name}: {e}")
 
 
-def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP_K, dtw_candidate_pool=DEFAULT_DTW_POOL):
+def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP_K):
     """
-    Tìm kiếm và xếp hạng kết quả (2 giai đoạn).
-    
-    Stage 1: Vector search (pgvector cosine/euclidean)
-    Stage 2: DTW re-ranking (nếu metric="dtw")
+    Tìm kiếm sử dụng Euclidean/Cosine distance.
     
     Args:
         query_file_path (str): Đường dẫn file truy vấn
-        metric (str): "cosine", "euclidean", hoặc "dtw"
-        top_k (int): Số kết quả cuối cùng
-        dtw_candidate_pool (int): Số candidate cho DTW
+        metric (str): "cosine" hoặc "euclidean"
+        top_k (int): Số kết quả
         
     Returns:
-        dict: Trace object chứa query_summary, vector_candidates, final_results
+        dict: Trace object chứa query_summary và final_results
     """
     # Trích xuất query features
     y, sr, silence_ratio = preprocess_audio(query_file_path)
-    energy, zcr, f0_mean, spectral_centroid, spectral_bandwidth, query_vector, query_spectral_matrix = extract_features(y, sr)
+    energy, zcr, spectral_centroid, spectral_bandwidth, query_vector = extract_features(y, sr)
     frame_stats = analyze_audio_frames(y, sr)
 
     trace = {
@@ -103,96 +96,65 @@ def build_search_trace(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP
             "silence_ratio": silence_ratio,
             "energy": energy,
             "zcr": zcr,
-            "pitch_mean": f0_mean,
             "spectral_centroid": spectral_centroid,
             "spectral_bandwidth": spectral_bandwidth,
             "feature_vector_dim": len(query_vector),
-            "spectral_matrix_shape": tuple(query_spectral_matrix.shape),
             **frame_stats,
         },
-        "vector_candidates": [],
         "final_results": [],
     }
 
-    # ===== STAGE 1: Vector Search (nhanh) =====
-    vector_metric = metric if metric in {"cosine", "euclidean"} else "cosine"
-    candidate_limit = max(top_k, dtw_candidate_pool) if metric == "dtw" else top_k
+    # Vector search (Euclidean/Cosine)
+    search_metric = metric if metric in {"cosine", "euclidean"} else "cosine"
+    results = search_vector_candidates(query_vector, top_k=top_k, metric=search_metric)
     
-    vector_candidates = search_vector_candidates(query_vector, top_k=candidate_limit, metric=vector_metric)
-    
-    trace["vector_candidates"] = [
+    trace["final_results"] = [
         {
             "id": item["id"],
             "file_name": item["file_name"],
             "audio_src": f"/audio/{item['file_name']}",
             "distance": float(item["distance"]),
-            "similarity": distance_to_similarity(item["distance"], vector_metric),
+            "similarity": distance_to_similarity(item["distance"], search_metric),
         }
-        for item in vector_candidates
+        for item in results
     ]
-
-    # ===== STAGE 2: DTW Re-ranking (chính xác) =====
-    if metric == "dtw":
-        dtw_scored = []
-        for candidate in vector_candidates:
-            if not candidate["spectral_matrix"]:
-                continue
-            dtw_distance = calculate_dtw_distance(query_spectral_matrix, candidate["spectral_matrix"])
-            dtw_scored.append(
-                {
-                    "id": candidate["id"],
-                    "file_name": candidate["file_name"],
-                    "audio_src": f"/audio/{candidate['file_name']}",
-                    "distance": float(dtw_distance),
-                    "similarity": distance_to_similarity(dtw_distance, "dtw"),
-                }
-            )
-
-        dtw_scored.sort(key=lambda x: x["similarity"], reverse=True)
-        trace["final_results"] = dtw_scored[:top_k]
-    else:
-        # Không DTW: final_results = vector_candidates
-        trace["final_results"] = trace["vector_candidates"][:top_k]
 
     return trace
 
 
-def search_similar_audio(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP_K, dtw_candidate_pool=DEFAULT_DTW_POOL):
+def search_similar_audio(query_file_path, metric=DEFAULT_METRIC, top_k=DEFAULT_TOP_K):
     """
-    Tìm kiếm file giống nhất (trả về final results).
+    Tìm kiếm file giống nhất.
     
     Args:
         query_file_path (str): Đường dẫn file truy vấn
-        metric (str): Metric tìm kiếm
+        metric (str): "cosine" hoặc "euclidean"
         top_k (int): Số kết quả
-        dtw_candidate_pool (int): Số candidate cho DTW
         
     Returns:
-        list: Top-K kết quả (từ final_results)
+        list: Top-K kết quả
     """
     trace = build_search_trace(
         query_file_path=query_file_path,
         metric=metric,
         top_k=top_k,
-        dtw_candidate_pool=dtw_candidate_pool,
     )
     return trace["final_results"]
 
 
-def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, dtw_candidate_pool=DEFAULT_DTW_POOL):
+def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, metric=DEFAULT_METRIC):
     """
-    Tìm kiếm và in log chi tiết (2 giai đoạn).
+    Tìm kiếm và in log chi tiết.
     
     Args:
         query_file_path (str): Đường dẫn file truy vấn
         top_k (int): Số kết quả
-        dtw_candidate_pool (int): Số candidate cho DTW
+        metric (str): "cosine" hoặc "euclidean"
     """
     trace = build_search_trace(
         query_file_path=query_file_path,
-        metric="dtw",
+        metric=metric,
         top_k=top_k,
-        dtw_candidate_pool=dtw_candidate_pool,
     )
 
     summary = trace["query_summary"]
@@ -203,9 +165,9 @@ def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, dtw_candidate_po
     print(f"silence_ratio={summary['silence_ratio']:.6f}")
     print(
         "features="
-        f"energy={summary['energy']:.6f}, zcr={summary['zcr']:.6f}, pitch_mean={summary['pitch_mean']:.6f}, centroid={summary['spectral_centroid']:.6f}, bandwidth={summary['spectral_bandwidth']:.6f}"
+        f"energy={summary['energy']:.6f}, zcr={summary['zcr']:.6f}, centroid={summary['spectral_centroid']:.6f}, bandwidth={summary['spectral_bandwidth']:.6f}"
     )
-    print(f"feature_vector_dim={summary['feature_vector_dim']}, spectral_matrix_shape={summary['spectral_matrix_shape']}")
+    print(f"feature_vector_dim={summary['feature_vector_dim']}")
     print(
         f"frame_stats=frames:{summary['frame_count']}, "
         f"frame_energy_mean:{summary['frame_energy_mean']:.6f}, "
@@ -213,10 +175,6 @@ def trace_search_pipeline(query_file_path, top_k=DEFAULT_TOP_K, dtw_candidate_po
         f"frame_silent_ratio:{summary['frame_silent_ratio']:.6f}"
     )
 
-    print("\n=== Stage 1: Vector Candidate Search ===")
-    for idx, item in enumerate(trace["vector_candidates"][:top_k], start=1):
-        print(f"{idx}. {item['file_name']} | distance={item['distance']:.6f} | similarity={item['similarity']:.6f}")
-
-    print("\n=== Stage 2: Final Ranking ===")
+    print(f"\n=== Search Results (Top {top_k}) ===")
     for idx, item in enumerate(trace["final_results"], start=1):
         print(f"{idx}. {item['file_name']} | distance={item['distance']:.6f} | similarity={item['similarity']:.6f}")

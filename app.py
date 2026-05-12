@@ -28,9 +28,8 @@ def _svg_to_data_uri(svg_markup):
 
 
 def build_visualizations(file_path):
-  """Build waveform and spectrogram visualizations for the query audio."""
+  """Build waveform visualization for the query audio (no spectrogram)."""
   y, sr, _ = preprocess_audio(file_path)
-  *_, spectral_matrix = extract_features(y, sr)
 
   width = 900
   height = 220
@@ -53,53 +52,15 @@ def build_visualizations(file_path):
   """
   waveform_uri = _svg_to_data_uri(waveform_svg)
 
-  if spectral_matrix.size == 0:
-    spectrogram_svg = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
-      <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
-      <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Spectrogram</text>
-      <text x="18" y="62" fill="#6b6258" font-size="14" font-family="Georgia, serif">No spectral data</text>
-    </svg>
-    """
-    spectrogram_uri = _svg_to_data_uri(spectrogram_svg)
-  else:
-    max_frames = 160
-    if spectral_matrix.shape[0] > max_frames:
-      indices = np.linspace(0, spectral_matrix.shape[0] - 1, num=max_frames, dtype=int)
-      spectral_matrix = spectral_matrix[indices]
-
-    matrix = spectral_matrix.T
-    rows, cols = matrix.shape
-    plot_x = 18
-    plot_y = 40
-    plot_width = 850
-    plot_height = 150
-    cell_w = plot_width / max(cols, 1)
-    cell_h = plot_height / max(rows, 1)
-    max_value = float(np.max(matrix)) or 1.0
-
-    rects = []
-    for row_idx in range(rows):
-      for col_idx in range(cols):
-        value = matrix[row_idx, col_idx] / max_value
-        value = float(np.clip(value, 0.0, 1.0))
-        red = int(28 + 198 * value)
-        green = int(18 + 62 * value)
-        blue = int(42 + 18 * value)
-        rects.append(
-          f'<rect x="{plot_x + col_idx * cell_w:.2f}" y="{plot_y + (rows - 1 - row_idx) * cell_h:.2f}" '
-          f'width="{cell_w + 0.3:.2f}" height="{cell_h + 0.3:.2f}" fill="rgb({red},{green},{blue})" />'
-        )
-
-    spectrogram_svg = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
-      <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
-      <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Spectrogram</text>
-      {''.join(rects)}
-      <rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d6c4b2" stroke-width="1" />
-    </svg>
-    """
-    spectrogram_uri = _svg_to_data_uri(spectrogram_svg)
+  # Simple placeholder spectrogram (28-D feature visualization)
+  spectrogram_svg = f"""
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">
+    <rect width="100%" height="100%" fill="#fffaf3" rx="18" />
+    <text x="18" y="28" fill="#7a4f2b" font-size="18" font-family="Georgia, serif">Features</text>
+    <text x="18" y="62" fill="#6b6258" font-size="14" font-family="Georgia, serif">28-D: [energy, zcr, centroid, bandwidth, + 24-band]</text>
+  </svg>
+  """
+  spectrogram_uri = _svg_to_data_uri(spectrogram_svg)
 
   return waveform_uri, spectrogram_uri
 
@@ -149,11 +110,9 @@ def render_page(title, message="", trace=None):
             <div><span>Silence ratio</span><strong>{query_summary['silence_ratio']:.6f}</strong></div>
             <div><span>Energy</span><strong>{query_summary['energy']:.6f}</strong></div>
             <div><span>ZCR</span><strong>{query_summary['zcr']:.6f}</strong></div>
-            <div><span>Pitch mean</span><strong>{query_summary['pitch_mean']:.6f}</strong></div>
             <div><span>Spectral centroid</span><strong>{query_summary['spectral_centroid']:.6f}</strong></div>
             <div><span>Spectral bandwidth</span><strong>{query_summary['spectral_bandwidth']:.6f}</strong></div>
             <div><span>Feature vector</span><strong>{query_summary['feature_vector_dim']} chiều</strong></div>
-            <div><span>Spectral matrix shape</span><strong>{query_summary['spectral_matrix_shape']}</strong></div>
             <div><span>Frame count</span><strong>{query_summary['frame_count']}</strong></div>
             <div><span>Frame energy mean</span><strong>{query_summary['frame_energy_mean']:.6f}</strong></div>
             <div><span>Frame ZCR mean</span><strong>{query_summary['frame_zcr_mean']:.6f}</strong></div>
@@ -280,7 +239,7 @@ def render_page(title, message="", trace=None):
                 <h1>Giao diện cơ bản để nạp dữ liệu, tìm kiếm và xem kết quả trung gian.</h1>
                 <p>
                   Tải lên một file âm thanh nam giới mới để tìm 5 file giống nhất, hoặc index lại bộ dữ liệu WAV có sẵn.
-                  Giao diện này dùng trực tiếp pipeline trích xuất đặc trưng, pgvector và DTW re-ranking của hệ thống hiện tại.
+                  Giao diện này dùng trực tiếp pipeline trích xuất đặc trưng (energy, ZCR, spectral_centroid, spectral_bandwidth, 24-band) và vector search Euclidean với pgvector.
                 </p>
                 <p class="footer-note">Chế độ mặc định: WAV, chuẩn hóa 5 giây, 16 kHz, mono.</p>
               </div>
@@ -304,18 +263,12 @@ def render_page(title, message="", trace=None):
                       <div>
                         <label for="metric">Metric</label>
                         <select id="metric" name="metric">
-                          <option value="cosine">Cosine</option>
                           <option value="euclidean">Euclidean</option>
-                          <option value="dtw">DTW</option>
                         </select>
                       </div>
                       <div>
                         <label for="top_k">Top-K</label>
                         <input id="top_k" name="top_k" type="number" min="1" max="20" value="5" />
-                      </div>
-                      <div>
-                        <label for="dtw_candidate_pool">DTW pool</label>
-                        <input id="dtw_candidate_pool" name="dtw_candidate_pool" type="number" min="5" max="100" value="30" />
                       </div>
                     </div>
                     <div class="actions">
@@ -333,14 +286,7 @@ def render_page(title, message="", trace=None):
 
             <div class="tables">
               <section class="card">
-                <h2>Các ứng viên trung gian</h2>
-                <table>
-                  <thead><tr><th>#</th><th>File</th><th>Similarity</th><th>Distance</th><th>Nghe</th></tr></thead>
-                  <tbody>{build_rows(vector_candidates)}</tbody>
-                </table>
-              </section>
-              <section class="card">
-                <h2>Kết quả cuối cùng</h2>
+                <h2>Kết quả tìm kiếm</h2>
                 <table>
                   <thead><tr><th>#</th><th>File</th><th>Similarity</th><th>Distance</th><th>Nghe</th></tr></thead>
                   <tbody>{build_rows(final_results)}</tbody>
@@ -386,9 +332,8 @@ def index_data(folder_path: str = Form(default="data/dataset/male_dataset_500"))
 @app.post("/search", response_class=HTMLResponse)
 async def search_audio(
     query_file: UploadFile = File(...),
-    metric: str = Form(default="cosine"),
+    metric: str = Form(default="euclidean"),
     top_k: int = Form(default=5),
-    dtw_candidate_pool: int = Form(default=30),
 ):
     init_db()
     suffix = Path(query_file.filename or "query.wav").suffix or ".wav"
@@ -408,7 +353,6 @@ async def search_audio(
           query_file_path=temp_path,
           metric=metric,
           top_k=top_k,
-          dtw_candidate_pool=dtw_candidate_pool,
         )
       except sf.LibsndfileError:
         return render_page(
